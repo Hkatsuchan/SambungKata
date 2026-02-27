@@ -1,245 +1,149 @@
--- Anti double execute
-if getgenv().SambungKataHubV3 then return end
-getgenv().SambungKataHubV3 = true
+-- RENN LOADER V2
+-- owner: renn
 
-local SCRIPT_VERSION = "3.0"
-local SCRIPT_URL = "https://raw.githubusercontent.com/Hkatsuchan/SambungKata/main/script.lua"
-local UPDATE_URL = SCRIPT_URL .. "?v=" .. tostring(math.random(1000,9999))
+local cloneref = cloneref or function(x) return x end
+local game = cloneref(game)
 
-local CONFIG_FILE = "SambungKata_Config.json"
+local Players = cloneref(game:GetService("Players"))
+local StarterGui = cloneref(game:GetService("StarterGui"))
+local HttpService = cloneref(game:GetService("HttpService"))
 
-local HttpService = game:GetService("HttpService")
-local UIS = game:GetService("UserInputService")
+local VERSION = "2.0.0"
+local OWNER = "renn"
 
--- Default config
-getgenv().Config = {
-    Mode = "LEGIT",
-    AutoPlay = true
+local CONFIG_FILE = "renn_loader_config.json"
+
+-- default config
+local default_config = {
+    typing_delay = 1.2,
+    random_delay = true,
+    min_delay = 0.8,
+    max_delay = 1.8
 }
 
--- Load config
+local config = default_config
+
+-- load config
 pcall(function()
-    if isfile and readfile and isfile(CONFIG_FILE) then
-        local data = readfile(CONFIG_FILE)
-        local decoded = HttpService:JSONDecode(data)
-        for i,v in pairs(decoded) do
-            getgenv().Config[i] = v
-        end
+    if isfile and isfile(CONFIG_FILE) then
+        config = HttpService:JSONDecode(readfile(CONFIG_FILE))
+    else
+        writefile(CONFIG_FILE, HttpService:JSONEncode(default_config))
     end
 end)
 
--- Save config
-local function SaveConfig()
+-- save config
+local function save_config()
+    if writefile then
+        writefile(CONFIG_FILE, HttpService:JSONEncode(config))
+    end
+end
+
+-- notify
+local function notify(title, text)
     pcall(function()
-        if writefile then
-            writefile(CONFIG_FILE, HttpService:JSONEncode(getgenv().Config))
-        end
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 5
+        })
     end)
 end
 
--- Auto update
-task.spawn(function()
-    pcall(function()
-        local latest = game:HttpGet(UPDATE_URL)
-        if latest and not latest:find(SCRIPT_VERSION) then
-            warn("Update found, reloading...")
-            task.wait(1)
-            loadstring(latest)()
-        end
-    end)
-end)
+-- loader list
+local loaders = {
+    [130342654546662] = {
+        name = "Sambung Kata",
+        url = "https://api.luarmor.net/files/v4/loaders/4b4c6f8fb300d59c59b1f0ce609397e2.lua"
+    },
 
--- Database kata (lebih banyak)
-local words = {
-"aku","kamu","makan","minum","lari","rumah","hujan","jalan","ikan",
-"ular","roti","indah","harimau","udang","gajah","hutan","nasi",
-"susu","ularan","naga","api","ikanan","nanas","sate","elang",
-"garam","mata","angin","negara","ayam","malam","motor","radio",
-"orang","gula","laut","tanah","hijau","usaha","anak","kapal",
-"pintu","ulari","ikanmu","ularmu","makanmu","rumahku","langit",
-"tikus","sepatu","ularapi","ikanlaut","sambung","kata","kertas",
-"senja","apiun","negri","indonesia","taman","malas","singa"
+    [129866685202296] = {
+        name = "Last Letter",
+        url = "https://api.luarmor.net/files/v4/loaders/ac23c180bd5691977221910e04ff2aa4.lua"
+    }
 }
 
-local usedWords = {}
+local default_loader = {
+    name = "Unsupported Game",
+    url = ""
+}
 
--- Cari kata
-local function GetWord(letter)
-    for _,w in pairs(words) do
-        if not usedWords[w] then
-            if not letter or w:sub(1,1) == letter then
-                usedWords[w] = true
-                return w
-            end
-        end
-    end
-
-    usedWords = {}
-    return words[math.random(1,#words)]
-end
-
--- Remote scan
-local Remote = nil
-
-local function ScanRemote()
-    for _,v in pairs(game:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            local n = string.lower(v.Name)
-            if n:find("kata") or n:find("word") or n:find("submit") or n:find("answer") then
-                return v
-            end
-        end
-    end
-end
-
-task.spawn(function()
-    while not Remote do
-        Remote = ScanRemote()
-        task.wait(1)
-    end
-end)
-
--- AUTO SCAN HURUF (FITUR BARU)
-local LastLetter = nil
-
--- Scan dari GUI
-local function ScanLetterGUI()
-    for _,v in pairs(game:GetDescendants()) do
-        if v:IsA("TextLabel") then
-            local text = string.lower(v.Text)
-            if #text == 1 then
-                LastLetter = text
-                return
-            end
-        end
-    end
-end
-
--- Scan dari remote (lebih akurat)
-local function HookRemote()
-    for _,v in pairs(game:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            v.OnClientEvent:Connect(function(data)
-                if typeof(data) == "string" then
-                    local txt = string.lower(data)
-                    if #txt == 1 then
-                        LastLetter = txt
-                    end
-                end
-            end)
-        end
-    end
-end
-
-HookRemote()
-
--- Delay system
-local function GetDelay()
-    if getgenv().Config.Mode == "FAST" then
-        return math.random(2,4) / 10
+-- human delay system
+local function get_delay()
+    if config.random_delay then
+        return math.random() * (config.max_delay - config.min_delay) + config.min_delay
     else
-        return math.random(12,18) / 10
+        return config.typing_delay
     end
 end
 
--- Main loop
+-- send word with delay
+function _G.SendWordWithDelay(callback, word)
+    local delay_time = get_delay()
+    task.wait(delay_time)
+    callback(word)
+end
+
+-- load script
+local function load_script(url)
+    if url == "" then
+        notify("RENN Loader", "Game tidak didukung")
+        return
+    end
+
+    local success, err = pcall(function()
+        local script = game:HttpGet(url)
+        local func = loadstring(script)
+        func()
+    end)
+
+    if not success then
+        warn("Loader error:", err)
+        notify("Loader Error", "Script gagal dijalankan")
+    end
+end
+
+-- simple UI
 task.spawn(function()
-    while task.wait(GetDelay()) do
-        if getgenv().Config.AutoPlay and Remote then
+    pcall(function()
+        local ScreenGui = Instance.new("ScreenGui")
+        ScreenGui.Name = "RENN_UI"
+        ScreenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
 
-            if not LastLetter then
-                ScanLetterGUI()
-            end
+        local Frame = Instance.new("Frame")
+        Frame.Size = UDim2.new(0,200,0,120)
+        Frame.Position = UDim2.new(0,20,0,200)
+        Frame.BackgroundTransparency = 0.2
+        Frame.Parent = ScreenGui
 
-            local word = GetWord(LastLetter)
+        local Title = Instance.new("TextLabel")
+        Title.Text = "RENN LOADER"
+        Title.Size = UDim2.new(1,0,0,30)
+        Title.Parent = Frame
 
-            pcall(function()
-                Remote:FireServer(word)
-            end)
-        end
-    end
+        local Button = Instance.new("TextButton")
+        Button.Text = "Toggle Random Delay"
+        Button.Size = UDim2.new(1,0,0,40)
+        Button.Position = UDim2.new(0,0,0,40)
+        Button.Parent = Frame
+
+        Button.MouseButton1Click:Connect(function()
+            config.random_delay = not config.random_delay
+            save_config()
+            notify("Config Updated", "Random Delay: "..tostring(config.random_delay))
+        end)
+    end)
 end)
 
--- UI
-local ScreenGui = Instance.new("ScreenGui")
-local Frame = Instance.new("Frame")
-local Toggle = Instance.new("TextButton")
-local Mode = Instance.new("TextButton")
-local Info = Instance.new("TextLabel")
+-- main
+local placeId = game.PlaceId
+local selected = loaders[placeId] or default_loader
 
-ScreenGui.Parent = game.CoreGui
+notify("RENN Loader", "Loading "..selected.name)
 
-Frame.Parent = ScreenGui
-Frame.Size = UDim2.new(0,220,0,140)
-Frame.Position = UDim2.new(0,20,0,200)
-Frame.BackgroundColor3 = Color3.fromRGB(25,25,25)
+load_script(selected.url)
 
-Toggle.Parent = Frame
-Toggle.Size = UDim2.new(1,0,0,40)
-Toggle.Text = "Auto: ON"
-
-Mode.Parent = Frame
-Mode.Size = UDim2.new(1,0,0,40)
-Mode.Position = UDim2.new(0,0,0,40)
-Mode.Text = "Mode: LEGIT"
-
-Info.Parent = Frame
-Info.Size = UDim2.new(1,0,0,40)
-Info.Position = UDim2.new(0,0,0,80)
-Info.Text = "Scan: Active"
-
-Toggle.MouseButton1Click:Connect(function()
-    getgenv().Config.AutoPlay = not getgenv().Config.AutoPlay
-    Toggle.Text = "Auto: " .. (getgenv().Config.AutoPlay and "ON" or "OFF")
-    SaveConfig()
-end)
-
-Mode.MouseButton1Click:Connect(function()
-    if getgenv().Config.Mode == "LEGIT" then
-        getgenv().Config.Mode = "FAST"
-    else
-        getgenv().Config.Mode = "LEGIT"
-    end
-    Mode.Text = "Mode: " .. getgenv().Config.Mode
-    SaveConfig()
-end)
-
--- Drag UI
-local dragging
-local dragInput
-local dragStart
-local startPos
-
-Frame.InputBegan:Connect(function(input)
-    if input.UserInputType.Name == "MouseButton1" then
-        dragging = true
-        dragStart = input.Position
-        startPos = Frame.Position
-    end
-end)
-
-Frame.InputChanged:Connect(function(input)
-    if input.UserInputType.Name == "MouseMovement" then
-        dragInput = input
-    end
-end)
-
-UIS.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        Frame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end
-end)
-
-UIS.InputEnded:Connect(function(input)
-    if input.UserInputType.Name == "MouseButton1" then
-        dragging = false
-    end
-end)
-
-print("Sambung Kata V3 Loaded | Auto Scan Active")
+print("====== RENN LOADER V2 ======")
+print("Owner:", OWNER)
+print("Version:", VERSION)
+print("Delay Mode:", config.random_delay and "Random" or "Fixed")
