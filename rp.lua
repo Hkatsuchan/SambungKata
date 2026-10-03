@@ -20,26 +20,45 @@ local VU        = game:GetService("VirtualUser")
 local CG        = game:GetService("CoreGui")
 local LP        = Players.LocalPlayer
 
-local Remotes  = RS:WaitForChild("Remotes", 10)
-local FishSys  = RS:WaitForChild("FishingSystem", 10)
-local ToolEvt  = Remotes:WaitForChild("Tool", 10):WaitForChild("Event")
-local NotifyR  = Remotes:WaitForChild("Notifications", 10):WaitForChild("Event")
-local OpenUI   = Remotes:FindFirstChild("OpenCenterUi")
-local SellOre  = Remotes:FindFirstChild("SellOre")
-local ServiceR = Remotes:FindFirstChild("ServiceRecords")
+-- Resolve game-specific dependencies without allowing a missing folder to
+-- abort the whole UI after it has already been created.
+local Remotes  = RS:FindFirstChild("Remotes")
+local FishSys  = RS:FindFirstChild("FishingSystem")
+local ToolFolder = Remotes and Remotes:FindFirstChild("Tool")
+local ToolEvt  = ToolFolder and ToolFolder:FindFirstChild("Event")
+local NotifyFolder = Remotes and Remotes:FindFirstChild("Notifications")
+local NotifyR  = NotifyFolder and NotifyFolder:FindFirstChild("Event")
+local OpenUI   = Remotes and Remotes:FindFirstChild("OpenCenterUi")
+local SellOre  = Remotes and Remotes:FindFirstChild("SellOre")
+local ServiceR = Remotes and Remotes:FindFirstChild("ServiceRecords")
+
+local function SafeFire(remote, ...)
+    if not remote or not remote:IsA("RemoteEvent") then return false end
+    local ok = pcall(remote.FireServer, remote, ...)
+    return ok
+end
+
+local function SafeInvoke(remote, ...)
+    if not remote or not remote:IsA("RemoteFunction") then return false, nil end
+    return pcall(remote.InvokeServer, remote, ...)
+end
 
 local F = {
-    Cast    = FishSys:FindFirstChild("CastReplication"),
-    Bite    = FishSys:FindFirstChild("RequestBite"),
-    Give    = FishSys:FindFirstChild("FishGiver"),
-    Clean   = FishSys:FindFirstChild("CleanupCast"),
-    Zone    = FishSys:FindFirstChild("ZoneState"),
-    ShowN   = FishSys:FindFirstChild("ShowNotification"),
+    Cast    = FishSys and FishSys:FindFirstChild("CastReplication"),
+    Bite    = FishSys and FishSys:FindFirstChild("RequestBite"),
+    Give    = FishSys and FishSys:FindFirstChild("FishGiver"),
+    Clean   = FishSys and FishSys:FindFirstChild("CleanupCast"),
+    Zone    = FishSys and FishSys:FindFirstChild("ZoneState"),
+    ShowN   = FishSys and FishSys:FindFirstChild("ShowNotification"),
 }
-local IE = FishSys:FindFirstChild("InventoryEvents")
+local IE = FishSys and FishSys:FindFirstChild("InventoryEvents")
 if IE then
     F.InvGet  = IE:FindFirstChild("Inventory_GetData")
     F.InvSell = IE:FindFirstChild("Inventory_SellAll")
+end
+
+if not Remotes or not FishSys then
+    Notify("Mizukage Hub", "Game remotes not found. UI loaded, game-specific features are disabled.", 8)
 end
 
 local flags = {
@@ -88,13 +107,13 @@ local function EquipTool(name)
     local c = GetChar(); if not c then return end
     local t = GetToolByName(name); if not t then return end
     if t.Parent ~= c then t.Parent = c; task.wait(0.3) end
-    pcall(function() ToolEvt:FireServer("EquipModel", t) end)
+    pcall(function() SafeFire(ToolEvt, "EquipModel", t) end)
     return t
 end
 
 local function Unequip(tool)
     if not tool then return end
-    pcall(function() ToolEvt:FireServer("UnequipModel", tool) end)
+    pcall(function() SafeFire(ToolEvt, "UnequipModel", tool) end)
 end
 
 local function GetRod()
@@ -114,7 +133,7 @@ local function EquipRod()
     local r = GetRod(); if not r then return end
     if r.Parent ~= c then r.Parent = c; task.wait(0.3) end
     if not r:FindFirstChild("Handle") then return r end
-    ToolEvt:FireServer("EquipModel", r)
+    SafeFire(ToolEvt, "EquipModel", r)
     return r
 end
 
@@ -134,7 +153,7 @@ local function EquipPickaxe()
     local c = GetChar(); if not c then return end
     local p = GetPickaxe(); if not p then return end
     if p.Parent ~= c then p.Parent = c; task.wait(0.3) end
-    ToolEvt:FireServer("EquipModel", p)
+    SafeFire(ToolEvt, "EquipModel", p)
     return p
 end
 
@@ -210,14 +229,14 @@ Tabs.Fishing:CreateToggle({Name="Auto Fish (Cast+Reel)",Flag="AutoFish",Callback
 Tabs.Fishing:CreateToggle({Name="Perfect Cast",CurrentValue=true,Flag="PerfectCast",Callback=function(v) flags.PerfectCast=v end})
 Tabs.Fishing:CreateToggle({Name="Instant Bite",Flag="InstantBite",Callback=function(v) flags.InstantBite=v end})
 Tabs.Fishing:CreateToggle({Name="Fast Cast (0.2s)",Flag="FastFish",Callback=function(v) flags.FastFish=v end})
-Tabs.Fishing:CreateToggle({Name="Legendary Only (skip trash)",Flag="LegendaryOnly",Callback=function(v) flags.LegendaryOnly=v end})
+Tabs.Fishing:CreateToggle({Name="Legendary Only (experimental)",Flag="LegendaryOnly",Callback=function(v) flags.LegendaryOnly=v; if v then Notify("Legendary Only","Rarity data is not exposed by this client script, so no fish are filtered yet.",5) end end})
 
 Tabs.Fishing:CreateSection("Inventory")
 Tabs.Fishing:CreateToggle({Name="Auto Sell Inventory",Flag="AutoSell",Callback=function(v) flags.AutoSell=v end})
 Tabs.Fishing:CreateSlider({Name="Auto Sell Delay",Range={1,60},Increment=1,Suffix="s",CurrentValue=10,Flag="SellDelay",Callback=function(v) flags.SellDelay=v end})
-Tabs.Fishing:CreateButton({Name="Sell Inventory Now",Callback=function() pcall(function() F.InvSell:InvokeServer() end) end})
+Tabs.Fishing:CreateButton({Name="Sell Inventory Now",Callback=function() pcall(function() SafeInvoke(F.InvSell) end) end})
 Tabs.Fishing:CreateButton({Name="Get Inventory Data",Callback=function()
-    local ok, d = pcall(function() return F.InvGet:InvokeServer() end)
+    local ok, d = pcall(function() return SafeInvoke(F.InvGet) end)
     if ok and d then print(d); Notify("Inventory","Dumped to console") end
 end})
 
@@ -225,15 +244,18 @@ Tabs.Fishing:CreateSection("Rod")
 Tabs.Fishing:CreateButton({Name="Equip Best Rod",Callback=function()
     local c = GetChar(); if not c then return end
     local bp = LP:FindFirstChildOfClass("Backpack"); if not bp then return end
-    local best, bestName
+    local best, bestScore = nil, -1
     local order = {["Premium Rod"]=5,["Lucky Rod"]=4,["Golden Rod"]=3,["Rod"]=2}
     for _,t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") and t.Name:find("Rod") then
-            local o = order[t.Name] or 1
-            if not best or o > bestName then best=t; bestName=o end
+            local score = order[t.Name] or 1
+            if score > bestScore then best=t; bestScore=score end
         end
     end
-    if best then EquipRod() end
+    if best then
+        if best.Parent ~= c then best.Parent = c; task.wait(0.2) end
+        SafeFire(ToolEvt, "EquipModel", best)
+    end
 end})
 
 -- ═══════════════════════════════════════════
@@ -249,7 +271,7 @@ Tabs.Jobs:CreateButton({Name="Mine Nearest Ore x5",Callback=function()
     local p = EquipPickaxe(); if not p then return end
     for i=1,5 do
         local ore = Nearest({"Ore","Mineral","Rock","Azurith","Copper","Iron","Gold","Crystal"}, flags.MineRange)
-        if ore then pcall(function() ToolEvt:FireServer("MineOres", p, ore) end) end
+        if ore then pcall(function() SafeFire(ToolEvt, "MineOres", p, ore) end) end
         task.wait(0.3)
     end
 end})
@@ -260,12 +282,12 @@ Tabs.Jobs:CreateToggle({Name="Auto Drink",Flag="AutoDrink",Callback=function(v) 
 Tabs.Jobs:CreateToggle({Name="Auto Collect (pickup items)",Flag="AutoCollect",Callback=function(v) flags.AutoCollect=v end})
 Tabs.Jobs:CreateButton({Name="Force Eat",Callback=function()
     for _,n in ipairs({"CerealBar","Popcorn","FoodPlate"}) do
-        local t = GetToolByName(n); if t then EquipTool(n); task.wait(0.2); pcall(function() ToolEvt:FireServer("Eat",t) end) break end
+        local t = GetToolByName(n); if t then EquipTool(n); task.wait(0.2); SafeFire(ToolEvt, "Eat", t) break end
     end
 end})
 Tabs.Jobs:CreateButton({Name="Force Drink",Callback=function()
     for _,n in ipairs({"Soda","WaterCup","BloxyCola"}) do
-        local t = GetToolByName(n); if t then EquipTool(n); task.wait(0.2); pcall(function() ToolEvt:FireServer("Drink",t) end) break end
+        local t = GetToolByName(n); if t then EquipTool(n); task.wait(0.2); SafeFire(ToolEvt, "Drink", t) break end
     end
 end})
 
@@ -294,7 +316,7 @@ Tabs.Combat:CreateButton({Name="Equip Handcuffs",Callback=function()
     local t = GetToolByName("Handcuffs"); if t then EquipTool("Handcuffs") end
 end})
 Tabs.Combat:CreateToggle({Name="Auto Surrender on Cuff",Flag="AutoSurrender",Callback=function(v) flags.AutoSurrender=v end})
-Tabs.Combat:CreateToggle({Name="Auto Uncuff Self",Flag="AutoUncuff",Callback=function(v) flags.AutoUncuff=v end})
+Tabs.Combat:CreateToggle({Name="Auto Uncuff Self (experimental)",Flag="AutoUncuff",Callback=function(v) flags.AutoUncuff=v; if v then Notify("Auto Uncuff","Requires a game-specific remote/API; not forced in stable build.",5) end end})
 
 Tabs.Combat:CreateSection("Weapons")
 Tabs.Combat:CreateButton({Name="Give Pistol",Callback=function() EquipTool("Pistol") end})
@@ -321,8 +343,8 @@ Tabs.Player:CreateButton({Name="Reset Character",Callback=function() local c=Get
 
 Tabs.Player:CreateSection("Defense")
 Tabs.Player:CreateToggle({Name="Godmode (visual)",Flag="God",Callback=function(v) flags.Godmode=v end})
-Tabs.Player:CreateToggle({Name="Anti Arrest",Flag="AntiArrest",Callback=function(v) flags.AntiArrest=v end})
-Tabs.Player:CreateToggle({Name="Anti Cuff",Flag="AntiCuff",Callback=function(v) flags.AntiCuff=v end})
+Tabs.Player:CreateToggle({Name="Anti Arrest (experimental)",Flag="AntiArrest",Callback=function(v) flags.AntiArrest=v; if v then Notify("Anti Arrest","No safe client-side implementation available in this build.",5) end end})
+Tabs.Player:CreateToggle({Name="Anti Cuff (experimental)",Flag="AntiCuff",Callback=function(v) flags.AntiCuff=v; if v then Notify("Anti Cuff","No safe client-side implementation available in this build.",5) end end})
 Tabs.Player:CreateToggle({Name="Anti Ragdoll",Flag="AntiRagdoll",Callback=function(v) flags.AntiRagdoll=v end})
 
 Tabs.Player:CreateSection("Animation Filter")
@@ -369,11 +391,25 @@ Tabs.TP:CreateButton({Name="Mineral Buyer",Callback=function() TPToPart(FindFirs
 
 Tabs.TP:CreateSection("Players")
 local tpTarget
-Tabs.TP:CreateDropdown({Name="Target",Options={"(none)"},CurrentOption={"(none)"},Flag="TPTarget",Callback=function(o) tpTarget=o end})
+local TPDropdown = Tabs.TP:CreateDropdown({
+    Name="Target",
+    Options={"(none)"},
+    CurrentOption={"(none)"},
+    Flag="TPTarget",
+    Callback=function(o)
+        tpTarget = type(o) == "table" and o[1] or o
+    end
+})
 Tabs.TP:CreateButton({Name="Refresh",Callback=function()
     local opts = {}
-    for _,p in ipairs(Players:GetPlayers()) do if p~=LP then table.insert(opts,p.Name) end end
-    if #opts==0 then opts={"(none)"} end
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then table.insert(opts,p.Name) end
+    end
+    if #opts == 0 then opts={"(none)"} end
+    if TPDropdown and TPDropdown.Refresh then
+        pcall(function() TPDropdown:Refresh(opts) end)
+    end
+    tpTarget = opts[1]
 end})
 Tabs.TP:CreateButton({Name="TP To Target",Callback=function()
     if not tpTarget or tpTarget=="(none)" then return end
@@ -390,9 +426,7 @@ Tabs.Visual:CreateToggle({Name="Player ESP",Flag="ESPP",Callback=function(v) fla
 Tabs.Visual:CreateToggle({Name="Ore ESP",Flag="ESPO",Callback=function(v) flags.ESP_Ores=v end})
 Tabs.Visual:CreateToggle({Name="Fish ESP",Flag="ESPF",Callback=function(v) flags.ESP_Fish=v end})
 Tabs.Visual:CreateButton({Name="Clear ESP",Callback=function()
-    for _,d in ipairs(WS:GetDescendants()) do
-        if d.Name=="MizuESP" then d:Destroy() end
-    end
+    ClearESP()
 end})
 
 Tabs.Visual:CreateSection("Lighting")
@@ -421,23 +455,23 @@ end})
 -- ═══════════════════════════════════════════
 Tabs.Gang:CreateSection("Gang")
 Tabs.Gang:CreateButton({Name="Open Gang UI",Callback=function()
-    if OpenUI then OpenUI:FireServer("Gang") end
+    if OpenUI then SafeFire(OpenUI, "Gang") end
 end})
 Tabs.Gang:CreateButton({Name="Open Gang War Tracker",Callback=function()
-    if OpenUI then OpenUI:FireServer("GangWar") end
+    if OpenUI then SafeFire(OpenUI, "GangWar") end
 end})
 Tabs.Gang:CreateButton({Name="Open Gang Armory",Callback=function()
-    if OpenUI then OpenUI:FireServer("GangArmory") end
+    if OpenUI then SafeFire(OpenUI, "GangArmory") end
 end})
 Tabs.Gang:CreateButton({Name="Open Reseller",Callback=function()
-    if OpenUI then OpenUI:FireServer("Reseller") end
+    if OpenUI then SafeFire(OpenUI, "Reseller") end
 end})
 Tabs.Gang:CreateSection("Quest")
 Tabs.Gang:CreateButton({Name="Open Quest Tracker",Callback=function()
-    if OpenUI then OpenUI:FireServer("Quests") end
+    if OpenUI then SafeFire(OpenUI, "Quests") end
 end})
 Tabs.Gang:CreateButton({Name="Open Daily Tracker",Callback=function()
-    if OpenUI then OpenUI:FireServer("Daily") end
+    if OpenUI then SafeFire(OpenUI, "Daily") end
 end})
 
 -- ═══════════════════════════════════════════
@@ -451,7 +485,7 @@ Tabs.Auto:CreateDropdown({Name="Item to Buy",Options={"Soda","CerealBar","WaterC
 Tabs.Auto:CreateToggle({Name="Ore Loop (mine+sell)",Flag="OreLoop",Callback=function(v) flags.OreLoop=v end})
 
 Tabs.Auto:CreateSection("Notifications")
-Tabs.Auto:CreateToggle({Name="Chat Spy (log all chat)",Flag="ChatSpy",Callback=function(v) flags.ChatSpy=v end})
+Tabs.Auto:CreateToggle({Name="Chat Spy (experimental)",Flag="ChatSpy",Callback=function(v) flags.ChatSpy=v; if v then Notify("Chat Spy","Chat logging is not enabled in the stable build.",5) end end})
 Tabs.Auto:CreateButton({Name="Clear Notification Spam",Callback=function()
     local pg = LP:FindFirstChild("PlayerGui"); if not pg then return end
     for _,g in ipairs(pg:GetDescendants()) do
@@ -512,6 +546,7 @@ Tabs.Info:CreateButton({Name="Show Player Info",Callback=function()
     Notify("Info","Dumped to console")
 end})
 Tabs.Info:CreateButton({Name="Dump All Remotes",Callback=function()
+    if not Remotes then Notify("Remotes","Remotes folder not found"); return end
     for _,r in ipairs(Remotes:GetDescendants()) do
         if r:IsA("RemoteEvent") or r:IsA("RemoteFunction") then
             print(r:GetFullName(), r.ClassName)
@@ -565,24 +600,11 @@ LP.CharacterAdded:Connect(function(c)
 end)
 
 -- Replication filter
-local Unrel = Remotes:FindFirstChild("UnreliableReplicationEvent")
-if Unrel then
-    local mt = getrawmetatable and getrawmetatable(game)
-    if mt and setreadonly then
-        local old = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if self == Unrel and method == "FireServer" then
-                local args = {...}
-                if args[1] == "BlinkOnce" and flags.NoBlink then return end
-                if args[1] == "MoveNeck" and flags.NoNeck then return end
-            end
-            return old(self, ...)
-        end)
-        setreadonly(mt, true)
-    end
-end
+-- Intentionally does not hook __namecall/getrawmetatable. Those hooks are
+-- executor-specific and were the most likely cause of the post-GUI crash.
+-- The UI flags remain available, but replication filtering is disabled in
+-- this stable build.
+local ReplicationHookDisabled = true
 
 -- Anti-AFK
 LP.Idled:Connect(function()
@@ -658,7 +680,7 @@ task.spawn(function()
         if not rod then continue end
         if rod.Parent ~= c then
             rod.Parent = c; task.wait(0.3)
-            ToolEvt:FireServer("EquipModel", rod)
+            SafeFire(ToolEvt, "EquipModel", rod)
         end
         local hrp = c:FindFirstChild("HumanoidRootPart"); if not hrp then continue end
         local castVal = flags.PerfectCast and 1 or (math.random(70,99)/100)
@@ -666,7 +688,7 @@ task.spawn(function()
             F.Cast:FireServer(hrp.Position, hrp.CFrame.LookVector*50 + hrp.Position, rod.Name, castVal)
         end)
         task.wait(flags.FastFish and 0.2 or 0.5)
-        pcall(function() F.Bite:InvokeServer(castVal) end)
+        pcall(function() SafeInvoke(F.Bite, castVal) end)
         task.wait(flags.FastFish and 0.4 or 1.2)
         pcall(function()
             F.Give:FireServer({hookPosition=hrp.Position, perfect=flags.PerfectCast, rodName=rod.Name})
@@ -680,7 +702,7 @@ end)
 task.spawn(function()
     while task.wait(0.15) do
         if not flags.InstantBite then continue end
-        pcall(function() F.Bite:InvokeServer(1) end)
+        pcall(function() SafeInvoke(F.Bite, 1) end)
     end
 end)
 
@@ -691,7 +713,7 @@ task.spawn(function()
         if not flags.AutoSell then continue end
         if tick() - lastSellFish >= (flags.SellDelay or 10) then
             lastSellFish = tick()
-            pcall(function() F.InvSell:InvokeServer() end)
+            pcall(function() SafeInvoke(F.InvSell) end)
         end
     end
 end)
@@ -706,11 +728,11 @@ task.spawn(function()
         local c = GetChar(); if not c then continue end
         if p.Parent ~= c then
             p.Parent = c; task.wait(0.2)
-            ToolEvt:FireServer("EquipModel", p)
+            SafeFire(ToolEvt, "EquipModel", p)
         end
         local ore = Nearest({"Ore","Mineral","Rock","Azurith","Copper","Iron","Gold","Crystal"}, flags.MineRange)
         if ore then
-            pcall(function() ToolEvt:FireServer("MineOres", p, ore) end)
+            pcall(function() SafeFire(ToolEvt, "MineOres", p, ore) end)
         end
     end
 end)
@@ -725,7 +747,7 @@ task.spawn(function()
             local ore = Nearest({"Buyer"})
             if SellOre then
                 for _,n in ipairs({"Azurith","Copper","Iron","Gold","Crystal","Diamond"}) do
-                    pcall(function() SellOre:FireServer(n, 100) end)
+                    pcall(function() SafeFire(SellOre, n, 100) end)
                 end
             end
         end
@@ -740,13 +762,13 @@ task.spawn(function()
         if p then
             for i=1,10 do
                 local ore = Nearest({"Ore","Mineral","Rock"}, flags.MineRange)
-                if ore then pcall(function() ToolEvt:FireServer("MineOres", p, ore) end) end
+                if ore then pcall(function() SafeFire(ToolEvt, "MineOres", p, ore) end) end
                 task.wait(0.3)
             end
             task.wait(2)
             if SellOre then
                 for _,n in ipairs({"Azurith","Copper","Iron"}) do
-                    pcall(function() SellOre:FireServer(n, 100) end)
+                    pcall(function() SafeFire(SellOre, n, 100) end)
                 end
             end
         end
@@ -761,9 +783,9 @@ task.spawn(function()
             local t = GetToolByName(n)
             if t then
                 EquipTool(n); task.wait(0.3)
-                pcall(function() ToolEvt:FireServer("Eat", t) end)
+                pcall(function() SafeFire(ToolEvt, "Eat", t) end)
                 task.wait(2)
-                pcall(function() ToolEvt:FireServer("UnequipModel", t) end)
+                SafeFire(ToolEvt, "UnequipModel", t)
                 break
             end
         end
@@ -778,9 +800,9 @@ task.spawn(function()
             local t = GetToolByName(n)
             if t then
                 EquipTool(n); task.wait(0.3)
-                pcall(function() ToolEvt:FireServer("Drink", t) end)
+                pcall(function() SafeFire(ToolEvt, "Drink", t) end)
                 task.wait(2)
-                pcall(function() ToolEvt:FireServer("UnequipModel", t) end)
+                SafeFire(ToolEvt, "UnequipModel", t)
                 break
             end
         end
@@ -834,7 +856,7 @@ task.spawn(function()
             if target then
                 local hr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
                 if hr then
-                    pcall(function() ToolEvt:FireServer("Arrest", t, target) end)
+                    pcall(function() SafeFire(ToolEvt, "Arrest", t, target) end)
                 end
             end
         end
@@ -894,11 +916,27 @@ local ChatSvc = game:GetService("TextChatService")
 if flags.ChatSpy and ChatSvc then end
 
 -- ESP Loop
+local ActiveESP = {}
+
+local function ClearESP()
+    for i = #ActiveESP, 1, -1 do
+        local obj = ActiveESP[i]
+        if obj then pcall(function() obj:Destroy() end) end
+        table.remove(ActiveESP, i)
+    end
+end
+
+local function AddESP(adorn)
+    if adorn then table.insert(ActiveESP, adorn) end
+end
+
 task.spawn(function()
-    while task.wait(0.5) do
-        for _,d in ipairs(WS:GetDescendants()) do
-            if d.Name == "MizuESP" then d:Destroy() end
+    while task.wait(1.5) do
+        ClearESP()
+        if not (flags.ESP_Players or flags.ESP_Ores or flags.ESP_Fish) then
+            continue
         end
+
         if flags.ESP_Players then
             for _,p in ipairs(Players:GetPlayers()) do
                 if p ~= LP then
@@ -914,36 +952,38 @@ task.spawn(function()
                         bb.Transparency = 0.5
                         bb.Color3 = Color3.fromRGB(255,80,80)
                         bb.Parent = chr
+                        AddESP(bb)
                     end
                 end
             end
         end
-        if flags.ESP_Ores or flags.ESP_Fish then
-            local hrp = GetHRP()
-            if hrp then
-                for _,d in ipairs(WS:GetDescendants()) do
-                    if d:IsA("BasePart") and d.Anchored then
-                        local dd = (d.Position - hrp.Position).Magnitude
-                        if dd < 200 then
-                            if flags.ESP_Ores and (d.Name:find("Ore") or d.Name:find("Mineral") or d.Name:find("Rock")) then
-                                local bb = Instance.new("BoxHandleAdornment")
-                                bb.Name = "MizuESP"
-                                bb.Size = d.Size + Vector3.new(0.2,0.2,0.2)
-                                bb.Adornee = d
-                                bb.AlwaysOnTop = true
-                                bb.Transparency = 0.6
-                                bb.Color3 = Color3.fromRGB(0,200,255)
-                                bb.Parent = d
-                            elseif flags.ESP_Fish and (d.Name:find("Fish") or d.Name:find("Water") or d.Name:find("Pond")) then
-                                local bb = Instance.new("BoxHandleAdornment")
-                                bb.Name = "MizuESP"
-                                bb.Size = d.Size + Vector3.new(0.2,0.2,0.2)
-                                bb.Adornee = d
-                                bb.AlwaysOnTop = true
-                                bb.Transparency = 0.6
-                                bb.Color3 = Color3.fromRGB(80,255,120)
-                                bb.Parent = d
-                            end
+
+        local hrp = GetHRP()
+        if hrp and (flags.ESP_Ores or flags.ESP_Fish) then
+            for _,d in ipairs(WS:GetDescendants()) do
+                if d:IsA("BasePart") and d.Anchored then
+                    local dd = (d.Position - hrp.Position).Magnitude
+                    if dd < 200 then
+                        local isOre = flags.ESP_Ores and (
+                            d.Name:lower():find("ore") or
+                            d.Name:lower():find("mineral") or
+                            d.Name:lower():find("rock")
+                        )
+                        local isFish = flags.ESP_Fish and (
+                            d.Name:lower():find("fish") or
+                            d.Name:lower():find("water") or
+                            d.Name:lower():find("pond")
+                        )
+                        if isOre or isFish then
+                            local bb = Instance.new("BoxHandleAdornment")
+                            bb.Name = "MizuESP"
+                            bb.Size = d.Size + Vector3.new(0.2,0.2,0.2)
+                            bb.Adornee = d
+                            bb.AlwaysOnTop = true
+                            bb.Transparency = 0.6
+                            bb.Color3 = isOre and Color3.fromRGB(0,200,255) or Color3.fromRGB(80,255,120)
+                            bb.Parent = d
+                            AddESP(bb)
                         end
                     end
                 end
@@ -953,28 +993,10 @@ task.spawn(function()
 end)
 
 -- Silent Aim
-local oldNamecallSilent
-local mt2 = getrawmetatable and getrawmetatable(game)
-if mt2 and setreadonly and hookfunction then
-    local oldNC = mt2.__namecall
-    oldNamecallSilent = hookfunction(oldNC, newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if flags.SilentAim and (method == "FireServer" or method == "InvokeServer") then
-            local args = {...}
-            for i, v in ipairs(args) do
-                if typeof(v) == "Instance" and v:IsA("BasePart") then
-                    local target = NearestPlayer(flags.AimFOV)
-                    if target then
-                        local hr = target.Character and target.Character:FindFirstChild(flags.AimPart or "Head")
-                        if hr then args[i] = hr end
-                    end
-                end
-            end
-            return oldNC(self, table.unpack(args))
-        end
-        return oldNC(self, ...)
-    end))
-end
+-- Disabled in the stable build. Hooking __namecall here was unsafe across
+-- executors and could terminate the client. Aim-related UI remains intact
+-- for configuration, while normal tool activation is left untouched.
+local SilentAimHookDisabled = true
 
 -- Rapid Fire
 task.spawn(function()
@@ -1001,4 +1023,8 @@ task.spawn(function()
     end
 end)
 
-Rayfield:Notify({Title="Mizukage Hub v2",Content="Loaded • 10 tabs • Fully featured",Duration=6})
+Rayfield:Notify({
+    Title="Mizukage Hub v2.1",
+    Content="Loaded • stable build • unsafe hooks disabled",
+    Duration=6
+})
